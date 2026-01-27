@@ -1,4 +1,8 @@
-use std::{alloc, mem, ptr, slice};
+use std::{
+    alloc,
+    mem::{self, swap},
+    ptr, slice,
+};
 
 pub trait StructMetadata {
     const NUM_FIELDS: usize;
@@ -16,6 +20,7 @@ pub struct Soa<T, const NUM_FIELDS: usize> {
     pointers: [*mut u8; NUM_FIELDS],
     length: usize,
     capacity: usize,
+    #[allow(dead_code)]
     data: Vec<u8>,
     marker: std::marker::PhantomData<T>,
 }
@@ -111,8 +116,29 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
         self.len() == 0
     }
 
+    fn swap(&mut self, other: &mut Self) {
+        swap(self, other);
+    }
+
     pub fn push(&mut self, value: &T) {
-        assert!(self.length < self.capacity);
+        if self.length >= self.capacity {
+            // Reallocate
+            let mut soa = Self::new(2 * self.capacity);
+            for i in 0..NUM_FIELDS {
+                let size_bytes = T::layout(i).size();
+                unsafe {
+                    let src = self.pointers[i];
+                    let dst = soa.pointers[i];
+
+                    // Safe, since soa is different from self, and thus their pointers are distinct
+                    // Thus, the &T cannot point to our memory
+                    ptr::copy_nonoverlapping(src, dst, size_bytes * self.length);
+                }
+            }
+            soa.length = self.length;
+
+            self.swap(&mut soa);
+        }
 
         let byte_ptr = (value as *const T).cast::<u8>();
         for i in 0..NUM_FIELDS {
@@ -147,6 +173,10 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
 
     pub fn swap_remove(&mut self, index: usize) -> T {
         assert!(index < self.len());
+        self.swap_remove_unchecked(index)
+    }
+
+    pub fn swap_remove_unchecked(&mut self, index: usize) -> T {
         if index == self.len() - 1 {
             self.pop().unwrap()
         } else {
@@ -185,6 +215,10 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
 
     pub fn get_copy(&self, index: usize) -> T {
         assert!(index < self.len());
+        self.get_copy_unchecked(index)
+    }
+
+    pub fn get_copy_unchecked(&self, index: usize) -> T {
         let mut uninit: mem::MaybeUninit<T> = mem::MaybeUninit::uninit();
         let byte_ptr: *mut u8 = uninit.as_mut_ptr().cast::<u8>();
 
@@ -265,7 +299,6 @@ mod tests {
     #[test]
     fn new() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::memory_requirement(N);
         let soa = SphereSoa::new(N);
         let data_end = unsafe { soa.data.as_ptr().add(soa.data.len()) };
 
@@ -296,6 +329,48 @@ mod tests {
         }
 
         assert!(soa.is_empty());
+    }
+
+    #[test]
+    fn swapping_two_soas_works() {
+        let mut soa1 = SphereSoa::new(8);
+
+        let sphere = Sphere {
+            radius: 1.0,
+            position: [1.0, 2.0, 3.0],
+            tag: 666,
+        };
+
+        soa1.push(&sphere);
+        soa1.push(&sphere);
+        soa1.push(&sphere);
+        soa1.push(&sphere);
+
+        assert_eq!(soa1.capacity, 8);
+        assert_eq!(soa1.length, 4);
+
+        let spheres = soa1.get_copies();
+        for sphere in spheres {
+            assert_eq!(sphere.radius, 1.0);
+            assert_eq!(sphere.position, [1.0, 2.0, 3.0]);
+            assert_eq!(sphere.tag, 666);
+        }
+
+        let mut soa2 = SphereSoa::new(16);
+        soa1.swap(&mut soa2);
+
+        assert_eq!(soa2.capacity, 8);
+        assert_eq!(soa2.length, 4);
+
+        let spheres = soa2.get_copies();
+        for sphere in spheres {
+            assert_eq!(sphere.radius, 1.0);
+            assert_eq!(sphere.position, [1.0, 2.0, 3.0]);
+            assert_eq!(sphere.tag, 666);
+        }
+
+        assert!(soa1.is_empty());
+        assert_eq!(soa1.capacity, 16);
     }
 
     #[test]
@@ -347,6 +422,32 @@ mod tests {
         assert!(sphere.radius == soa.get_slice::<f32, 0>()[0]);
         assert!(sphere.position == soa.get_slice::<[f32; 3], 1>()[0]);
         assert!(sphere.tag == soa.get_slice::<u64, 2>()[0]);
+    }
+
+    #[test]
+    fn push_reallocated_at_capacity() {
+        let mut soa = SphereSoa::new(8);
+        assert_eq!(soa.capacity, 8);
+
+        let sphere = Sphere {
+            radius: 1.0,
+            position: [1.0, 2.0, 3.0],
+            tag: 666,
+        };
+
+        for _ in 0..8 {
+            soa.push(&sphere);
+        }
+
+        soa.push(&sphere);
+        assert!(soa.capacity > 8);
+        assert_eq!(soa.length, 9);
+
+        for sphere in soa.get_copies() {
+            assert_eq!(sphere.radius, 1.0);
+            assert_eq!(sphere.position, [1.0, 2.0, 3.0]);
+            assert_eq!(sphere.tag, 666);
+        }
     }
 
     #[test]
