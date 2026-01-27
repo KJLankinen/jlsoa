@@ -91,8 +91,8 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
                     Ident::new(&format!("{}_mut", name.as_ref().unwrap()), f.ident.span());
                 let field_type = &f.ty;
                 quote_spanned! {f.span() =>
-                    fn #name(&self) -> &'p[#field_type];
-                    fn #name_mut(&mut self) -> &'p mut [#field_type];
+                    fn #name(&self) -> &[#field_type];
+                    fn #name_mut(&mut self) -> &mut [#field_type];
                 }
             });
             quote! {
@@ -106,8 +106,8 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
                 let name_mut = format_ident!("field{}_mut", index);
                 let field_type = &f.ty;
                 quote_spanned! {f.span() =>
-                    fn #name(&self) -> &'p[#field_type];
-                    fn #name_mut(&mut self) -> &'p mut[#field_type];
+                    fn #name(&self) -> &[#field_type];
+                    fn #name_mut(&mut self) -> &mut[#field_type];
                 }
             });
             quote! {
@@ -126,11 +126,11 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
                 let index = Index::from(i);
                 let field_type = &f.ty;
                 quote_spanned! {f.span() =>
-                    fn #name(&self) -> &'p[#field_type] {
+                    fn #name(&self) -> &[#field_type] {
                         self.get_slice::<#field_type, #index>()
                     }
 
-                    fn #name_mut(&mut self) -> &'p mut [#field_type] {
+                    fn #name_mut(&mut self) -> &mut [#field_type] {
                         self.get_mut_slice::<#field_type, #index>()
                     }
                 }
@@ -146,10 +146,10 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
                 let name_mut = format_ident!("field{}_mut", index);
                 let field_type = &f.ty;
                 quote_spanned! {f.span() =>
-                    fn #name(&self) -> &'p[#field_type] {
+                    fn #name(&self) -> &[#field_type] {
                         self.get_slice::<#field_type, #index>()
                     }
-                    fn #name_mut(&mut self) -> &'p mut[#field_type] {
+                    fn #name_mut(&mut self) -> &mut[#field_type] {
                         self.get_mut_slice::<#field_type, #index>()
                     }
                 }
@@ -184,11 +184,11 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
             type MutRefType = ();
         }
 
-        pub trait #trait_name<'p> {
+        pub trait #trait_name {
             #trait_fn_declarations
         }
 
-        impl<'p> #trait_name<'p> for Soa<'p, #name, { #name::NUM_FIELDS }> {
+        impl #trait_name for Soa<#name, { #name::NUM_FIELDS }> {
             #trait_fn_definitions
         }
     };
