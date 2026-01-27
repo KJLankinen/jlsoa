@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use jlsoa::{Aos, AosDerive, Soa};
+use jlsoa::{Aos, AosDerive, Soa, StructMetadata};
 use rand::SeedableRng;
 use rand_distr::{Distribution, Normal, Uniform};
 
@@ -19,7 +19,7 @@ pub struct Sphere {
 }
 
 const N: usize = 1 << 20;
-type SphereSoa<'p> = Soa<'p, Sphere, { Sphere::NUM_FIELDS }, N>;
+type SphereSoa = Soa<Sphere, { Sphere::NUM_FIELDS }>;
 
 fn generate_spheres() -> Vec<Sphere> {
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1);
@@ -40,8 +40,8 @@ fn generate_spheres() -> Vec<Sphere> {
         .collect::<Vec<Sphere>>()
 }
 
-fn generate_soa(data: &mut [u8]) -> SphereSoa {
-    let mut soa = SphereSoa::new(data);
+fn generate_soa(capacity: usize) -> SphereSoa {
+    let mut soa = SphereSoa::new(capacity);
     for sphere in generate_spheres() {
         soa.push(&sphere);
     }
@@ -62,16 +62,12 @@ fn assign_tag(position: &[f32; 3], radius: &f32) -> u64 {
 }
 
 fn soa_access(c: &mut Criterion) {
-    let mem_req = SphereSoa::memory_requirement();
-    let mut data: Vec<u8> = vec![0; mem_req];
-    let mut soa = black_box(generate_soa(data.as_mut_slice()));
+    let mut soa = black_box(generate_soa(N));
     c.bench_function("soa access", |b| {
         b.iter(|| {
-            let tag = soa.tag_mut();
-            let position = soa.position();
-            let radius = soa.radius();
-            for i in 0..soa.len() {
-                tag[i] = assign_tag(&position[i], &radius[i]);
+            let len = soa.len();
+            for i in 0..len {
+                soa.tag_mut()[i] = assign_tag(&soa.position()[i], &soa.radius()[i]);
             }
         })
     });

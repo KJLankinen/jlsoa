@@ -25,6 +25,11 @@ pub struct Soa<T, const NUM_FIELDS: usize> {
     marker: std::marker::PhantomData<T>,
 }
 
+struct StaticAssert<const N: usize, const I: usize> {}
+impl<const N: usize, const I: usize> StaticAssert<N, I> {
+    pub const GREATER_THAN: () = assert!(N > I);
+}
+
 impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
     pub fn new(capacity: usize) -> Self {
         assert!(
@@ -181,7 +186,6 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
             self.pop().unwrap()
         } else {
             // last != index as per the check above
-            // last doesn't wrap, as per the assert above
             let last = self.len() - 1;
             let mut uninit: mem::MaybeUninit<T> = mem::MaybeUninit::uninit();
             let byte_ptr: *mut u8 = uninit.as_mut_ptr().cast::<u8>();
@@ -193,7 +197,6 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
                 assert!(offset_bytes + size_bytes <= mem::size_of::<T>());
                 unsafe {
                     // 1. Copy from index to returned value
-                    // Safe because we checked index is below self.length
                     let src = self.pointers[i].add(size_bytes * index);
                     // Safe because offset is within the object
                     let dst = byte_ptr.add(offset_bytes);
@@ -247,12 +250,12 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
     }
 
     pub fn get_slice<S, const I: usize>(&self) -> &[S] {
-        assert!(I < NUM_FIELDS);
+        let _ = StaticAssert::<NUM_FIELDS, I>::GREATER_THAN;
         unsafe { slice::from_raw_parts(self.pointers[I].cast::<S>(), self.len()) }
     }
 
     pub fn get_mut_slice<S, const I: usize>(&mut self) -> &mut [S] {
-        assert!(I < NUM_FIELDS);
+        let _ = StaticAssert::<NUM_FIELDS, I>::GREATER_THAN;
         unsafe { slice::from_raw_parts_mut(self.pointers[I].cast::<S>(), self.len()) }
     }
 }
@@ -448,14 +451,6 @@ mod tests {
             assert_eq!(sphere.position, [1.0, 2.0, 3.0]);
             assert_eq!(sphere.tag, 666);
         }
-    }
-
-    #[test]
-    #[should_panic = "assertion failed: I < NUM_FIELDS"]
-    fn get_slice_panics_when_index_too_large() {
-        const N: usize = 1 << 20;
-        let soa = SphereSoa::new(N);
-        let _slice = soa.get_slice::<u64, 3>();
     }
 
     #[test]
