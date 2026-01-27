@@ -1,0 +1,8 @@
+[package]
+name = "structure_of_arrays_test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+structure_of_arrays = { path = "../structure_of_arrays" }
+structure_of_arrays_macro = { path = "../structure_of_arrays_macro" }

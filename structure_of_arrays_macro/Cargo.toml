@@ -1,0 +1,15 @@
+# This crate contains procedural macros used in the workspace
+
+[package]
+name = "structure_of_arrays_macro"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+heck = "0.5"
+syn = { version = "2.0.90", features = ["extra-traits"]}
+quote = "1.0.37"
+proc-macro2 = "1.0.92"

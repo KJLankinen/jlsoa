@@ -1,0 +1,6 @@
+/target
+/Cargo.lock
+*/logs
+.ccls-cache
+*.log
+*.so
