@@ -31,7 +31,7 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
             NUM_FIELDS == T::NUM_FIELDS,
             "Given generic argument must be equal to the number of fields on type T"
         );
-        let mut vec: Vec<u8> = vec![0; Self::memory_requirement(capacity)];
+        let mut vec: Vec<u8> = vec![0u8; Self::memory_requirement(capacity)];
         let data_slice = vec.as_mut_slice();
         let mut ptr: *mut u8 = data_slice.as_mut_ptr();
 
@@ -122,7 +122,7 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
 
     pub fn push(&mut self, value: &T) {
         if self.length >= self.capacity {
-            // Reallocate
+            // Reallocate & copy
             let mut soa = Self::new(2 * self.capacity);
             for i in 0..NUM_FIELDS {
                 let size_bytes = T::layout(i).size();
