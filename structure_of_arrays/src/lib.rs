@@ -4,20 +4,16 @@ use std::{
     ptr, slice,
 };
 
-pub trait StructMetadata {
-    const NUM_FIELDS: usize;
-    fn layout(i: usize) -> alloc::Layout;
-    fn offset_of(i: usize) -> usize;
+pub trait StructMetadata<const N: usize> {
+    const LAYOUT: [alloc::Layout; N];
+    const OFFSET: [usize; N];
 }
 
-pub trait Aos: Copy + StructMetadata {
-    type RefType;
-    type MutRefType;
-}
-
+// TODO: think about thread safety and whether or not this should be split to an owning struct and
+// views, which have a (possibly partial) view into the memory, which they may modify at will
 #[derive(Debug)]
-pub struct Soa<T, const NUM_FIELDS: usize> {
-    pointers: [*mut u8; NUM_FIELDS],
+pub struct Soa<T, const N: usize> {
+    pointers: [*mut u8; N],
     length: usize,
     capacity: usize,
     #[allow(dead_code)]
@@ -30,19 +26,18 @@ impl<const N: usize, const I: usize> StaticAssert<N, I> {
     pub const GREATER_THAN: () = assert!(N > I);
 }
 
-impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
+impl<T, const N: usize> Soa<T, N>
+where
+    T: Copy + Default + StructMetadata<N>,
+{
     pub fn new(capacity: usize) -> Self {
-        assert!(
-            NUM_FIELDS == T::NUM_FIELDS,
-            "Given generic argument must be equal to the number of fields on type T"
-        );
         let mut vec: Vec<u8> = vec![0u8; Self::memory_requirement(capacity)];
         let data_slice = vec.as_mut_slice();
         let mut ptr: *mut u8 = data_slice.as_mut_ptr();
 
         let soa = Self {
             pointers: std::array::from_fn(|i| {
-                let layout = T::layout(i);
+                let layout = T::LAYOUT[i];
                 let alignment = ptr.align_offset(layout.align());
 
                 // size is less than usize::MAX
@@ -82,9 +77,9 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
         // set the values to the defaults for each type.
         let default = &T::default();
         let byte_ptr = (default as *const T).cast::<u8>();
-        for i in 0..NUM_FIELDS {
-            let size_bytes = T::layout(i).size();
-            let offset_bytes = T::offset_of(i);
+        for i in 0..N {
+            let size_bytes = T::LAYOUT[i].size();
+            let offset_bytes = T::OFFSET[i];
 
             assert!(offset_bytes + size_bytes <= mem::size_of::<T>());
 
@@ -105,9 +100,9 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
     }
 
     pub fn memory_requirement(capacity: usize) -> usize {
-        (0..NUM_FIELDS)
+        (0..N)
             .map(|i| {
-                let layout = T::layout(i);
+                let layout = T::LAYOUT[i];
                 capacity * layout.size() + layout.align() - 1
             })
             .sum()
@@ -129,8 +124,8 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
         if self.length >= self.capacity {
             // Reallocate & copy
             let mut soa = Self::new(2 * self.capacity);
-            for i in 0..NUM_FIELDS {
-                let size_bytes = T::layout(i).size();
+            for i in 0..N {
+                let size_bytes = T::LAYOUT[i].size();
                 unsafe {
                     let src = self.pointers[i];
                     let dst = soa.pointers[i];
@@ -146,9 +141,9 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
         }
 
         let byte_ptr = (value as *const T).cast::<u8>();
-        for i in 0..NUM_FIELDS {
-            let size_bytes = T::layout(i).size();
-            let offset_bytes = T::offset_of(i);
+        for i in 0..N {
+            let size_bytes = T::LAYOUT[i].size();
+            let offset_bytes = T::OFFSET[i];
 
             assert!(offset_bytes + size_bytes <= mem::size_of::<T>());
 
@@ -190,9 +185,9 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
             let mut uninit: mem::MaybeUninit<T> = mem::MaybeUninit::uninit();
             let byte_ptr: *mut u8 = uninit.as_mut_ptr().cast::<u8>();
 
-            for i in 0..NUM_FIELDS {
-                let size_bytes = T::layout(i).size();
-                let offset_bytes = T::offset_of(i);
+            for i in 0..N {
+                let size_bytes = T::LAYOUT[i].size();
+                let offset_bytes = T::OFFSET[i];
 
                 assert!(offset_bytes + size_bytes <= mem::size_of::<T>());
                 unsafe {
@@ -225,9 +220,9 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
         let mut uninit: mem::MaybeUninit<T> = mem::MaybeUninit::uninit();
         let byte_ptr: *mut u8 = uninit.as_mut_ptr().cast::<u8>();
 
-        for i in 0..NUM_FIELDS {
-            let size_bytes = T::layout(i).size();
-            let offset_bytes = T::offset_of(i);
+        for i in 0..N {
+            let size_bytes = T::LAYOUT[i].size();
+            let offset_bytes = T::OFFSET[i];
 
             assert!(offset_bytes + size_bytes <= mem::size_of::<T>());
             unsafe {
@@ -250,12 +245,12 @@ impl<T: Aos + Default, const NUM_FIELDS: usize> Soa<T, NUM_FIELDS> {
     }
 
     pub fn get_slice<S, const I: usize>(&self) -> &[S] {
-        let _ = StaticAssert::<NUM_FIELDS, I>::GREATER_THAN;
+        let _ = StaticAssert::<N, I>::GREATER_THAN;
         unsafe { slice::from_raw_parts(self.pointers[I].cast::<S>(), self.len()) }
     }
 
     pub fn get_mut_slice<S, const I: usize>(&mut self) -> &mut [S] {
-        let _ = StaticAssert::<NUM_FIELDS, I>::GREATER_THAN;
+        let _ = StaticAssert::<N, I>::GREATER_THAN;
         unsafe { slice::from_raw_parts_mut(self.pointers[I].cast::<S>(), self.len()) }
     }
 }
@@ -265,7 +260,7 @@ mod tests {
     use std::mem;
     use std::slice;
 
-    use super::{Aos, Soa, StructMetadata};
+    use super::{Soa, StructMetadata};
     use structure_of_arrays_macro::Aos;
 
     #[allow(dead_code)]
@@ -276,7 +271,7 @@ mod tests {
         tag: u64,
     }
 
-    type SphereSoa = super::Soa<Sphere, { Sphere::NUM_FIELDS }>;
+    type SphereSoa = super::Soa<Sphere, { Sphere::LAYOUT.len() }>;
 
     #[test]
     fn mem_req1() {
@@ -694,16 +689,16 @@ mod tests {
             tag: Tag,
         }
 
-        type BarSoa = super::Soa<Bar, { Bar::NUM_FIELDS }>;
+        type BarSoa = super::Soa<Bar, { Bar::LAYOUT.len() }>;
 
         let default = &Bar::default();
         let default_ptr = (default as *const Bar).cast::<u8>();
 
         const N: usize = 1 << 5;
 
-        for i in 0..Bar::NUM_FIELDS {
-            let size_bytes = Bar::layout(i).size();
-            let offset_bytes = Bar::offset_of(i);
+        for i in 0..Bar::LAYOUT.len() {
+            let size_bytes = Bar::LAYOUT[i].size();
+            let offset_bytes = Bar::OFFSET[i];
             assert!(offset_bytes + size_bytes <= mem::size_of::<Bar>());
             // The byte pattern for the defaults should differ from zero for at least some bytes
             unsafe {
@@ -719,9 +714,9 @@ mod tests {
         }
 
         let soa = BarSoa::new(N);
-        for i in 0..Bar::NUM_FIELDS {
-            let size_bytes = Bar::layout(i).size();
-            let offset_bytes = Bar::offset_of(i);
+        for i in 0..Bar::LAYOUT.len() {
+            let size_bytes = Bar::LAYOUT[i].size();
+            let offset_bytes = Bar::OFFSET[i];
 
             assert!(offset_bytes + size_bytes <= mem::size_of::<Bar>());
 

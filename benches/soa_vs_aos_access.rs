@@ -1,9 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use jlsoa::{Aos, AosDerive, Soa, StructMetadata};
+use jlsoa::{Aos, Soa, StructMetadata};
 use rand::SeedableRng;
 use rand_distr::{Distribution, Normal, Uniform};
 
-#[derive(Copy, Clone, Default, AosDerive)]
+#[derive(Copy, Clone, Default, Aos)]
 pub struct Sphere {
     pub position: [f32; 3],
     pub radius: f32,
@@ -19,7 +19,7 @@ pub struct Sphere {
 }
 
 const N: usize = 1 << 20;
-type SphereSoa = Soa<Sphere, { Sphere::NUM_FIELDS }>;
+type SphereSoa = Soa<Sphere, { Sphere::LAYOUT.len() }>;
 
 fn generate_spheres() -> Vec<Sphere> {
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1);

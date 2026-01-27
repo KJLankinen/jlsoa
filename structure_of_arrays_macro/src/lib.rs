@@ -27,14 +27,14 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
         |fields| fields.unnamed.len(),
     );
 
-    let layout_arms = generator(
+    let layout_elements = generator(
         &input.data,
         |fields| {
             let recurse = fields.named.iter().enumerate().map(|(i, f)| {
                 let index = Index::from(i);
                 let field_type = &f.ty;
                 quote_spanned! {f.span() =>
-                    #index => std::alloc::Layout::new::<#field_type>(),
+                    arr[#index] = std::alloc::Layout::new::<#field_type>();
                 }
             });
             quote! {
@@ -46,7 +46,7 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
                 let index = Index::from(i);
                 let field_type = &f.ty;
                 quote_spanned! {f.span() =>
-                    #index => std::alloc::Layout::new::<#field_type>(),
+                    arr[#index] = std::alloc::Layout::new::<#field_type>();
                 }
             });
             quote! {
@@ -55,14 +55,14 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
         },
     );
 
-    let offset_arms = generator(
+    let offset_elements = generator(
         &input.data,
         |fields| {
             let recurse = fields.named.iter().enumerate().map(|(i, f)| {
                 let index = Index::from(i);
-                let name = &f.ident;
+                let field_name = &f.ident;
                 quote_spanned! {f.span() =>
-                    #index => std::mem::offset_of!(Self, #name),
+                    arr[#index] = std::mem::offset_of!(#name, #field_name);
                 }
             });
             quote! {
@@ -73,7 +73,7 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
             let recurse = fields.unnamed.iter().enumerate().map(|(i, f)| {
                 let index = Index::from(i);
                 quote_spanned! {f.span() =>
-                    #index => std::mem::offset_of!(Self, #index),
+                    arr[#index] = std::mem::offset_of!(#name, #index);
                 }
             });
             quote! {
@@ -161,40 +161,34 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
     );
 
     let expanded = quote! {
-        impl StructMetadata for #name {
-            const NUM_FIELDS: usize = #num_fields;
-
-            fn layout(i: usize) -> std::alloc::Layout {
-                match i {
-                    #layout_arms
-                    _ => panic!("Too large index"),
-                }
-            }
-
-            fn offset_of(i: usize) -> usize {
-                match i {
-                    #offset_arms
-                    _ => panic!("Too large index"),
-                }
-            }
+        const fn layout<const N: usize>() -> [std::alloc::Layout; N] {
+            let mut arr = [std::alloc::Layout::new::<f32>(); N];
+            #layout_elements
+            arr
         }
 
-        impl Aos for #name {
-            type RefType = ();
-            type MutRefType = ();
+        const fn offset<const N: usize>() -> [usize; N] {
+            let mut arr = [0usize; N];
+            #offset_elements
+            arr
+        }
+
+        impl StructMetadata<#num_fields> for #name {
+            const LAYOUT: [std::alloc::Layout; #num_fields] = layout::<#num_fields>();
+            const OFFSET: [usize; #num_fields] = offset::<#num_fields>();
         }
 
         pub trait #trait_name {
             #trait_fn_declarations
         }
 
-        impl #trait_name for Soa<#name, { #name::NUM_FIELDS }> {
+        impl #trait_name for Soa<#name, #num_fields> {
             #trait_fn_definitions
         }
     };
 
     // Too see the output as a compiler error, uncomment this
-    //panic!("{}", proc_macro::TokenStream::from(expanded).to_string());
+    // panic!("{}", proc_macro::TokenStream::from(expanded).to_string());
     proc_macro::TokenStream::from(expanded)
 }
 
