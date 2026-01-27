@@ -12,21 +12,22 @@ pub trait Aos: Copy + StructMetadata {
 }
 
 #[derive(Debug)]
-pub struct Soa<'p, T, const NUM_FIELDS: usize, const N: usize> {
+pub struct Soa<'p, T, const NUM_FIELDS: usize> {
     pointers: [*mut u8; NUM_FIELDS],
     length: usize,
+    capacity: usize,
     marker: std::marker::PhantomData<&'p T>,
 }
 
-impl<'p, T: Aos + Default, const NUM_FIELDS: usize, const N: usize> Soa<'p, T, NUM_FIELDS, N> {
-    pub fn new(data: &'p mut [u8]) -> Self {
+impl<'p, T: Aos + Default, const NUM_FIELDS: usize> Soa<'p, T, NUM_FIELDS> {
+    pub fn new(data: &'p mut [u8], capacity: usize) -> Self {
         assert!(
             NUM_FIELDS == T::NUM_FIELDS,
             "Given generic argument must be equal to the number of fields on type T"
         );
         // !! N.B. The given slice must be a byte slice !!
         // !! N.B. The given slice is assumed to be an allocated object!!
-        assert!(data.len() >= Self::memory_requirement());
+        assert!(data.len() >= Self::memory_requirement(capacity));
         let mut ptr: *mut u8 = data.as_mut_ptr();
 
         let soa = Self {
@@ -35,8 +36,8 @@ impl<'p, T: Aos + Default, const NUM_FIELDS: usize, const N: usize> Soa<'p, T, N
                 let alignment = ptr.align_offset(layout.align());
 
                 // size is less than usize::MAX
-                assert!(usize::MAX / layout.size() > N);
-                let size = N * layout.size();
+                assert!(usize::MAX / layout.size() > capacity);
+                let size = capacity * layout.size();
 
                 // size + alignment are less than isize::MAX
                 assert!(alignment + size < isize::MAX as usize);
@@ -62,6 +63,7 @@ impl<'p, T: Aos + Default, const NUM_FIELDS: usize, const N: usize> Soa<'p, T, N
                 }
             }),
             length: 0,
+            capacity,
             marker: std::marker::PhantomData,
         };
 
@@ -79,8 +81,8 @@ impl<'p, T: Aos + Default, const NUM_FIELDS: usize, const N: usize> Soa<'p, T, N
                 // Safe because offset is within the object
                 let src = byte_ptr.add(offset_bytes);
 
-                for j in 0..N {
-                    // Safe, because we're doing this for values from 0 to N, where N is the amount
+                for j in 0..capacity {
+                    // Safe, because we're doing this for values from 0 to capacity, where capacity is the amount
                     // of elements
                     let dst = soa.pointers[i].add(size_bytes * j);
                     // Safe, since we're copying from a distinct object to our memory
@@ -91,11 +93,11 @@ impl<'p, T: Aos + Default, const NUM_FIELDS: usize, const N: usize> Soa<'p, T, N
         soa
     }
 
-    pub fn memory_requirement() -> usize {
+    pub fn memory_requirement(capacity: usize) -> usize {
         (0..NUM_FIELDS)
             .map(|i| {
                 let layout = T::layout(i);
-                N * layout.size() + layout.align() - 1
+                capacity * layout.size() + layout.align() - 1
             })
             .sum()
     }
@@ -109,7 +111,7 @@ impl<'p, T: Aos + Default, const NUM_FIELDS: usize, const N: usize> Soa<'p, T, N
     }
 
     pub fn push(&mut self, value: &T) {
-        assert!(self.length < N);
+        assert!(self.length < self.capacity);
 
         let byte_ptr = (value as *const T).cast::<u8>();
         for i in 0..NUM_FIELDS {
@@ -228,6 +230,7 @@ mod tests {
     use super::{Aos, Soa, StructMetadata};
     use structure_of_arrays_macro::Aos;
 
+    #[allow(dead_code)]
     #[derive(Debug, Clone, Copy, Default, Aos)]
     struct Sphere {
         radius: f32,
@@ -235,26 +238,25 @@ mod tests {
         tag: u64,
     }
 
-    type SphereSoa<'p, const N: usize> = super::Soa<'p, Sphere, { Sphere::NUM_FIELDS }, N>;
+    type SphereSoa<'p> = super::Soa<'p, Sphere, { Sphere::NUM_FIELDS }>;
 
     #[test]
     fn mem_req1() {
-        const N: usize = 1;
-        let mem_req = SphereSoa::<N>::memory_requirement();
-        assert!(mem_req > N * std::mem::size_of::<Sphere>());
+        let mem_req = SphereSoa::memory_requirement(1);
+        assert!(mem_req > std::mem::size_of::<Sphere>());
     }
 
     #[test]
     fn mem_req2() {
         const N: usize = 256;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         assert!(mem_req > N * std::mem::size_of::<Sphere>());
     }
 
     #[test]
     fn mem_req3() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         assert!(mem_req > N * std::mem::size_of::<Sphere>());
         println!("{}, {}", mem_req, N * std::mem::size_of::<Sphere>());
     }
@@ -262,10 +264,10 @@ mod tests {
     #[test]
     fn new() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
         let data_end = unsafe { data.as_ptr().add(data.len()) };
-        let soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let soa = SphereSoa::new(data.as_mut_slice(), N);
 
         assert!(soa.pointers[0].cast::<f32>().is_aligned());
         assert!(soa.pointers[1].cast::<[f32; 3]>().is_aligned());
@@ -299,9 +301,9 @@ mod tests {
     #[test]
     fn lenght_increased_correctly_when_pushed() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
 
         assert!(soa.is_empty());
         soa.push(&Sphere {
@@ -315,9 +317,9 @@ mod tests {
     #[test]
     fn pop_returns_pushed() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
         let sphere = Sphere {
             radius: 1.0,
             position: [1.0, 2.0, 3.0],
@@ -337,9 +339,9 @@ mod tests {
     #[test]
     fn pushed_is_set_correctly() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
         let sphere = Sphere {
             radius: 1.0,
             position: [1.0, 2.0, 3.0],
@@ -357,18 +359,18 @@ mod tests {
     #[should_panic = "assertion failed: I < NUM_FIELDS"]
     fn get_slice_panics_when_index_too_large() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let soa = SphereSoa::new(data.as_mut_slice(), N);
         let _slice = soa.get_slice::<u64, 3>();
     }
 
     #[test]
     fn slice_mut_mutates() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
         let sphere = Sphere {
             radius: 1.0,
             position: [1.0, 2.0, 3.0],
@@ -385,9 +387,9 @@ mod tests {
     #[test]
     fn get_copy_copies_correctly() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
         let sphere = Sphere {
             radius: 1.0,
             position: [1.0, 2.0, 3.0],
@@ -408,9 +410,9 @@ mod tests {
     #[should_panic = "assertion failed: index < self.len()"]
     fn get_copy_empty_returns_none() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let soa = SphereSoa::new(data.as_mut_slice(), N);
         // Panics because soa is empty
         let _ = soa.get_copy(0);
     }
@@ -418,18 +420,18 @@ mod tests {
     #[test]
     fn pop_empty_returns_none() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
         assert!(soa.pop().is_none());
     }
 
     #[test]
     fn get_copies_copies_all_correctly() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
         let sphere = Sphere {
             radius: 1.0,
             position: [1.0, 2.0, 3.0],
@@ -455,9 +457,9 @@ mod tests {
     #[should_panic = "assertion failed: index < self.len()"]
     fn swap_remove_empty_panics() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
         // Panic
         let _ = soa.swap_remove(0);
     }
@@ -466,9 +468,9 @@ mod tests {
     #[should_panic = "assertion failed: index < self.len()"]
     fn swap_remove_too_large_index_panics() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
 
         let sphere = Sphere {
             radius: 1.0,
@@ -485,9 +487,9 @@ mod tests {
     #[test]
     fn swap_remove_with_only_one_element_returns_the_only_and_soa_is_then_empty() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
 
         let sphere = Sphere {
             radius: 1.0,
@@ -509,9 +511,9 @@ mod tests {
     #[test]
     fn swap_remove_removes_the_correct_element1() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
 
         let sphere = Sphere {
             tag: 0,
@@ -539,9 +541,9 @@ mod tests {
     #[test]
     fn swap_remove_removes_the_correct_element2() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
 
         let sphere = Sphere {
             tag: 0,
@@ -569,9 +571,9 @@ mod tests {
     #[test]
     fn swap_remove_removes_the_correct_element3() {
         const N: usize = 1 << 20;
-        let mem_req = SphereSoa::<N>::memory_requirement();
+        let mem_req = SphereSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = SphereSoa::<N>::new(data.as_mut_slice());
+        let mut soa = SphereSoa::new(data.as_mut_slice(), N);
 
         let sphere = Sphere {
             tag: 0,
@@ -599,6 +601,7 @@ mod tests {
     #[test]
     fn memory_initialized_correctly() {
         // Make things for which the default byte pattern is not 0
+        #[allow(dead_code)]
         #[derive(Debug, Clone, Copy, Default)]
         enum Foo {
             A,
@@ -607,6 +610,7 @@ mod tests {
             C,
         }
 
+        #[allow(dead_code)]
         #[derive(Debug, Clone, Copy)]
         struct Tag {
             value: f32,
@@ -624,13 +628,13 @@ mod tests {
             tag: Tag,
         }
 
-        type BarSoa<'p, const N: usize> = super::Soa<'p, Bar, { Bar::NUM_FIELDS }, N>;
+        type BarSoa<'p> = super::Soa<'p, Bar, { Bar::NUM_FIELDS }>;
 
         let default = &Bar::default();
         let default_ptr = (default as *const Bar).cast::<u8>();
 
         const N: usize = 1 << 5;
-        let mem_req = BarSoa::<N>::memory_requirement();
+        let mem_req = BarSoa::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
 
         // First assert over data: the default should differ from zero bytes
@@ -654,7 +658,7 @@ mod tests {
             }
         }
 
-        let soa = BarSoa::<N>::new(data.as_mut_slice());
+        let soa = BarSoa::new(data.as_mut_slice(), N);
         for i in 0..Bar::NUM_FIELDS {
             let size_bytes = Bar::layout(i).size();
             let offset_bytes = Bar::offset_of(i);

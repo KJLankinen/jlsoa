@@ -188,7 +188,7 @@ pub fn derive_aos(token_stream: proc_macro::TokenStream) -> proc_macro::TokenStr
             #trait_fn_declarations
         }
 
-        impl<'p, const N: usize> #trait_name<'p> for Soa<'p, #name, { #name::NUM_FIELDS }, N> {
+        impl<'p> #trait_name<'p> for Soa<'p, #name, { #name::NUM_FIELDS }> {
             #trait_fn_definitions
         }
     };

@@ -45,9 +45,9 @@ mod named_struct_tests {
     #[test]
     fn named_accessors_implemented() {
         const N: usize = 1 << 6;
-        let mem_req = Soa::<Sphere, { Sphere::NUM_FIELDS }, N>::memory_requirement();
+        let mem_req = Soa::<Sphere, { Sphere::NUM_FIELDS }>::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = Soa::<Sphere, { Sphere::NUM_FIELDS }, N>::new(data.as_mut_slice());
+        let mut soa = Soa::<Sphere, { Sphere::NUM_FIELDS }>::new(data.as_mut_slice(), N);
 
         // Access either through the interface...
         let _ = SphereAccessor::position_mut(&mut soa);
@@ -107,9 +107,9 @@ mod unnamed_struct_tests {
     #[test]
     fn named_accessors_implemented() {
         const N: usize = 1 << 6;
-        let mem_req = Soa::<Sphere, { Sphere::NUM_FIELDS }, N>::memory_requirement();
+        let mem_req = Soa::<Sphere, { Sphere::NUM_FIELDS }>::memory_requirement(N);
         let mut data: Vec<u8> = vec![0; mem_req];
-        let mut soa = Soa::<Sphere, { Sphere::NUM_FIELDS }, N>::new(data.as_mut_slice());
+        let mut soa = Soa::<Sphere, { Sphere::NUM_FIELDS }>::new(data.as_mut_slice(), N);
 
         // Access either through the interface...
         let _ = SphereAccessor::field0_mut(&mut soa);
